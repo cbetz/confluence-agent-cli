@@ -5,6 +5,8 @@ Git-like Confluence pull/diff/push workflow for coding agents.
 The goal is simple: turn Confluence pages into local files an agent can inspect, edit, diff, and push back without using the browser editor.
 
 ```bash
+npm install -g confluence-agent-cli
+
 conf init --base-url https://example.atlassian.net --email you@example.com
 export CONFLUENCE_API_TOKEN=...
 
@@ -110,6 +112,21 @@ Push behavior:
 - Refuses lossy Markdown pushes unless `--allow-lossy` is provided.
 
 ## Install For Local Development
+
+For normal use:
+
+```bash
+npm install -g confluence-agent-cli
+conf --help
+```
+
+Or run without a global install:
+
+```bash
+npx confluence-agent-cli --help
+```
+
+For local development:
 
 ```bash
 npm install
