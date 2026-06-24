@@ -1,0 +1,229 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { createTwoFilesPatch } from "diff";
+import { hasLossyConversionRisk, storageToMarkdown } from "./conversion.js";
+import { CliError } from "./errors.js";
+import { sha256 } from "./hash.js";
+import {
+  fromPosixPath,
+  manifestPath,
+  originalMarkdownPath,
+  originalStoragePath,
+  pageFolderName,
+  STATE_DIR,
+  toPosixPath
+} from "./paths.js";
+import type { ConfluenceGateway } from "./confluenceClient.js";
+import type {
+  ConfluencePage,
+  LocalPageChange,
+  PageManifestEntry,
+  PageMeta,
+  PullManifest
+} from "./types.js";
+
+export async function readManifest(root: string): Promise<PullManifest> {
+  try {
+    return JSON.parse(await fs.readFile(manifestPath(root), "utf8")) as PullManifest;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new CliError(`No Confluence workspace found at ${root}. Run \`conf pull <page-id> --out ${root}\` first.`);
+    }
+    throw error;
+  }
+}
+
+export async function pullPageTree(input: {
+  client: ConfluenceGateway;
+  rootPageId: string;
+  outDir: string;
+  maxDepth: number;
+}): Promise<PullManifest> {
+  await fs.mkdir(path.join(input.outDir, STATE_DIR, "originals"), { recursive: true });
+  const pulledAt = new Date().toISOString();
+  const pages: PageManifestEntry[] = [];
+
+  async function visit(pageId: string, parentFolder: string, depth: number): Promise<void> {
+    const page = await input.client.getPage(pageId);
+    const entry = await writePulledPage({
+      client: input.client,
+      root: input.outDir,
+      parentFolder,
+      page,
+      pulledAt
+    });
+    pages.push(entry);
+
+    if (depth >= input.maxDepth) {
+      return;
+    }
+
+    const childPages = await input.client.listChildPages(page.id);
+    for (const child of childPages) {
+      await visit(child.id, fromPosixPath(input.outDir, entry.folderPath), depth + 1);
+    }
+  }
+
+  await visit(input.rootPageId, input.outDir, 0);
+
+  const manifest: PullManifest = {
+    schemaVersion: 1,
+    baseUrl: input.client.baseUrl,
+    rootPageId: input.rootPageId,
+    pulledAt,
+    pages
+  };
+  await fs.writeFile(manifestPath(input.outDir), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return manifest;
+}
+
+export async function listLocalChanges(root: string): Promise<LocalPageChange[]> {
+  const manifest = await readManifest(root);
+  const changes: LocalPageChange[] = [];
+
+  for (const entry of manifest.pages) {
+    const markdown = await fs.readFile(fromPosixPath(root, entry.markdownPath), "utf8");
+    const storage = await fs.readFile(fromPosixPath(root, entry.storagePath), "utf8");
+    const markdownSha256 = sha256(markdown);
+    const storageSha256 = sha256(storage);
+    const markdownChanged = markdownSha256 !== entry.lastPulledMarkdownSha256;
+    const storageChanged = storageSha256 !== entry.lastPulledStorageSha256;
+
+    if (markdownChanged || storageChanged) {
+      changes.push({
+        entry,
+        markdownChanged,
+        storageChanged,
+        markdownSha256,
+        storageSha256
+      });
+    }
+  }
+
+  return changes;
+}
+
+export async function renderDiff(root: string): Promise<string> {
+  const changes = await listLocalChanges(root);
+  const patches: string[] = [];
+
+  for (const change of changes) {
+    if (change.markdownChanged) {
+      const original = await fs.readFile(originalMarkdownPath(root, change.entry.id), "utf8");
+      const current = await fs.readFile(fromPosixPath(root, change.entry.markdownPath), "utf8");
+      patches.push(
+        createTwoFilesPatch(
+          `${change.entry.markdownPath} (pulled)`,
+          change.entry.markdownPath,
+          original,
+          current,
+          "",
+          ""
+        )
+      );
+    }
+
+    if (change.storageChanged) {
+      const original = await fs.readFile(originalStoragePath(root, change.entry.id), "utf8");
+      const current = await fs.readFile(fromPosixPath(root, change.entry.storagePath), "utf8");
+      patches.push(
+        createTwoFilesPatch(
+          `${change.entry.storagePath} (pulled)`,
+          change.entry.storagePath,
+          original,
+          current,
+          "",
+          ""
+        )
+      );
+    }
+  }
+
+  return patches.join("\n");
+}
+
+export async function updateManifestEntry(root: string, updated: PageManifestEntry): Promise<void> {
+  const manifest = await readManifest(root);
+  manifest.pages = manifest.pages.map((entry) => (entry.id === updated.id ? updated : entry));
+  manifest.pulledAt = new Date().toISOString();
+  await fs.writeFile(manifestPath(root), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+export async function refreshPageState(input: {
+  root: string;
+  entry: PageManifestEntry;
+  versionNumber: number;
+  storage: string;
+  markdown: string;
+}): Promise<PageManifestEntry> {
+  const pulledAt = new Date().toISOString();
+  await fs.writeFile(originalMarkdownPath(input.root, input.entry.id), input.markdown, "utf8");
+  await fs.writeFile(originalStoragePath(input.root, input.entry.id), input.storage, "utf8");
+
+  const updated: PageManifestEntry = {
+    ...input.entry,
+    versionNumber: input.versionNumber,
+    pulledAt,
+    lastPulledMarkdownSha256: sha256(input.markdown),
+    lastPulledStorageSha256: sha256(input.storage),
+    lossyConversionRisk: hasLossyConversionRisk(input.storage)
+  };
+  await writePageMeta(input.root, updated);
+  await updateManifestEntry(input.root, updated);
+  return updated;
+}
+
+async function writePulledPage(input: {
+  client: ConfluenceGateway;
+  root: string;
+  parentFolder: string;
+  page: ConfluencePage;
+  pulledAt: string;
+}): Promise<PageManifestEntry> {
+  const storage = input.page.body.storage?.value ?? "";
+  const markdown = storageToMarkdown(storage);
+  const folder = path.join(input.parentFolder, pageFolderName(input.page.title, input.page.id));
+  await fs.mkdir(folder, { recursive: true });
+
+  const markdownPath = path.join(folder, "page.md");
+  const storagePath = path.join(folder, "page.storage.html");
+  const metaPath = path.join(folder, "meta.json");
+
+  await fs.writeFile(markdownPath, markdown, "utf8");
+  await fs.writeFile(storagePath, storage, "utf8");
+  await fs.writeFile(originalMarkdownPath(input.root, input.page.id), markdown, "utf8");
+  await fs.writeFile(originalStoragePath(input.root, input.page.id), storage, "utf8");
+
+  const entry: PageManifestEntry = {
+    id: input.page.id,
+    title: input.page.title,
+    folderPath: toPosixPath(path.relative(input.root, folder)),
+    markdownPath: toPosixPath(path.relative(input.root, markdownPath)),
+    storagePath: toPosixPath(path.relative(input.root, storagePath)),
+    metaPath: toPosixPath(path.relative(input.root, metaPath)),
+    spaceId: input.page.spaceId,
+    parentId: input.page.parentId,
+    versionNumber: input.page.version.number,
+    lastPulledMarkdownSha256: sha256(markdown),
+    lastPulledStorageSha256: sha256(storage),
+    lossyConversionRisk: hasLossyConversionRisk(storage),
+    pulledAt: input.pulledAt
+  };
+
+  await writePageMeta(input.root, entry, input.client.pageUrl(input.page.id));
+  return entry;
+}
+
+async function writePageMeta(root: string, entry: PageManifestEntry, confluenceUrl?: string): Promise<void> {
+  const existing = await readExistingMeta(root, entry).catch(() => undefined);
+  const meta: PageMeta = {
+    ...entry,
+    schemaVersion: 1,
+    confluenceUrl: confluenceUrl ?? existing?.confluenceUrl ?? ""
+  };
+  await fs.writeFile(fromPosixPath(root, entry.metaPath), `${JSON.stringify(meta, null, 2)}\n`, "utf8");
+}
+
+async function readExistingMeta(root: string, entry: PageManifestEntry): Promise<PageMeta> {
+  return JSON.parse(await fs.readFile(fromPosixPath(root, entry.metaPath), "utf8")) as PageMeta;
+}

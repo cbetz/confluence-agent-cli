@@ -1,0 +1,47 @@
+{
+  "name": "confluence-agent-cli",
+  "version": "0.1.0",
+  "description": "Git-like Confluence pull/diff/push workflow for coding agents.",
+  "type": "module",
+  "bin": {
+    "conf": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/cli.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "confluence",
+    "cli",
+    "agents",
+    "wiki",
+    "markdown"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/diff": "^7.0.2",
+    "@types/node": "^26.0.0",
+    "@types/turndown": "^5.0.6",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "diff": "^9.0.0",
+    "marked": "^18.0.5",
+    "turndown": "^7.2.4",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  }
+}
