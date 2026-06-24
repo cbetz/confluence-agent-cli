@@ -6,6 +6,21 @@ import { pullPageTree } from "../src/workspace.js";
 import { FakeConfluenceClient, makePage, tempDir } from "./helpers.js";
 
 describe("push", () => {
+  it("allows empty Confluence storage bodies", async () => {
+    const root = await tempDir();
+    const client = new FakeConfluenceClient({
+      "100": makePage({
+        id: "100",
+        title: "Empty Page",
+        storage: ""
+      })
+    });
+
+    const manifest = await pullPageTree({ client, rootPageId: "100", outDir: root, maxDepth: 0 });
+
+    expect(manifest.pages[0]!.lastPulledStorageSha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+
   it("plans a markdown push with a live next version", async () => {
     const root = await tempDir();
     const client = new FakeConfluenceClient({

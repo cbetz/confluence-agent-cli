@@ -75,7 +75,7 @@ export class ConfluenceClient implements ConfluenceGateway {
       `/wiki/api/v2/pages/${encodeURIComponent(id)}?body-format=storage&include-version=true`
     );
     const parsed = pageSchema.parse(response);
-    if (!parsed.body.storage?.value) {
+    if (parsed.body.storage?.value === undefined) {
       throw new CliError(`Page ${id} did not include a storage body. Check page permissions or Confluence API behavior.`);
     }
     return parsed;
