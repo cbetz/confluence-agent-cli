@@ -16,7 +16,7 @@
     "node": ">=20"
   },
   "bin": {
-    "conf": "./dist/cli.js"
+    "conf": "dist/cli.js"
   },
   "main": "./dist/cli.js",
   "files": [
