@@ -6,6 +6,8 @@ The goal is simple: turn Confluence pages into local files an agent can inspect,
 
 ![Terminal demo](docs/demo.gif)
 
+Feedback from Confluence-heavy teams is welcome in the [launch discussion](https://github.com/cbetz/confluence-agent-cli/discussions/5).
+
 ```bash
 npm install -g confluence-agent-cli
 
