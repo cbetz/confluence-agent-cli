@@ -4,6 +4,8 @@ Git-like Confluence pull/diff/push workflow for coding agents.
 
 The goal is simple: turn Confluence pages into local files an agent can inspect, edit, diff, and push back without using the browser editor.
 
+![Terminal demo](docs/demo.gif)
+
 ```bash
 npm install -g confluence-agent-cli
 
@@ -41,6 +43,14 @@ wiki/
 Agents usually edit `page.md`. If a page contains Confluence macro or namespaced storage markup, the CLI marks it as a lossy conversion risk and refuses Markdown-based pushes by default. In those cases, edit `page.storage.html` or pass `--allow-lossy` deliberately.
 
 Attachments are pulled into each page's `attachments/` directory. Add a file there or modify an existing file, then run `conf push --dry-run` before publishing. Local deletion of attachments is intentionally ignored in the current version; remote attachment deletion is not implemented yet.
+
+## Why not just MCP?
+
+MCP is useful when an agent needs live tool calls against Confluence. This CLI is for a different workflow: making wiki changes reviewable before anything is published.
+
+`confluence-agent-cli` gives agents a local working copy with Markdown, raw Confluence storage HTML, attachment files, manifests, original snapshots, hashes, unified diffs, dry-run plans, and remote version checks. That makes it fit code-review habits: inspect files, run tools, review the diff, then push.
+
+The two approaches can work together. MCP is good for discovery and live actions. This CLI is meant for stateful edits where you want a filesystem, repeatable commands, and a clear publish step.
 
 ## Commands
 
