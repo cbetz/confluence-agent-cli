@@ -4,6 +4,7 @@ import type { ConfluenceGateway } from "./confluenceClient.js";
 import { CliError } from "./errors.js";
 import { fromPosixPath } from "./paths.js";
 import {
+  finalizeCreatedPage,
   listLocalAttachmentChanges,
   listLocalChanges,
   readPageAttachmentManifest,
@@ -38,9 +39,9 @@ export async function planPush(options: PushOptions): Promise<PushPlan> {
   for (const change of changes) {
     const source = resolveSource(change, options.source, options.allowLossy);
     let remoteVersionNumber: number | undefined;
-    let nextVersionNumber = change.entry.versionNumber + 1;
+    let nextVersionNumber = change.entry.isNew ? 1 : change.entry.versionNumber + 1;
 
-    if (options.remoteCheck) {
+    if (options.remoteCheck && !change.entry.isNew) {
       if (!options.client) {
         throw new CliError("Remote version check requires Confluence credentials.");
       }
@@ -59,6 +60,7 @@ export async function planPush(options: PushOptions): Promise<PushPlan> {
 
     pageItems.push({
       entry: change.entry,
+      action: change.entry.isNew ? "create" : "update",
       source,
       remoteVersionNumber,
       nextVersionNumber,
@@ -79,6 +81,7 @@ export async function planPush(options: PushOptions): Promise<PushPlan> {
 
 export async function executePush(options: PushOptions & { client: ConfluenceGateway }): Promise<PushPlan> {
   const plan = await planPush(options);
+  const createdPagesByLocalId = new Map<string, Awaited<ReturnType<typeof finalizeCreatedPage>>>();
 
   for (const item of plan.pages) {
     const markdownPath = fromPosixPath(options.root, item.entry.markdownPath);
@@ -96,31 +99,52 @@ export async function executePush(options: PushOptions & { client: ConfluenceGat
       await fs.writeFile(markdownPath, markdown, "utf8");
     }
 
-    const updated = await options.client.updatePage({
-      id: item.entry.id,
-      title: item.entry.title,
-      status: "current",
-      spaceId: item.entry.spaceId,
-      parentId: item.entry.parentId,
-      storageValue: storage,
-      versionNumber: item.nextVersionNumber ?? item.entry.versionNumber + 1,
-      message: options.message,
-      minorEdit: options.minorEdit
-    });
+    if (item.action === "create") {
+      const created = await options.client.createPage({
+        title: item.entry.title,
+        spaceId: item.entry.spaceId,
+        parentId: item.entry.parentId,
+        storageValue: storage
+      });
+      const finalized = await finalizeCreatedPage({
+        root: options.root,
+        localEntry: item.entry,
+        createdPage: created,
+        markdown,
+        storage,
+        confluenceUrl: options.client.pageUrl(created.id)
+      });
+      createdPagesByLocalId.set(item.entry.id, finalized);
+      item.entry = finalized;
+    } else {
+      const updated = await options.client.updatePage({
+        id: item.entry.id,
+        title: item.entry.title,
+        status: "current",
+        spaceId: item.entry.spaceId,
+        parentId: item.entry.parentId,
+        storageValue: storage,
+        versionNumber: item.nextVersionNumber ?? item.entry.versionNumber + 1,
+        message: options.message,
+        minorEdit: options.minorEdit
+      });
 
-    await refreshPageState({
-      root: options.root,
-      entry: item.entry,
-      versionNumber: updated.version.number,
-      markdown,
-      storage
-    });
+      await refreshPageState({
+        root: options.root,
+        entry: item.entry,
+        versionNumber: updated.version.number,
+        markdown,
+        storage
+      });
+    }
   }
 
   for (const item of plan.attachments) {
+    const page = createdPagesByLocalId.get(item.page.id) ?? item.page;
+    item.page = page;
     const bytes = await fs.readFile(fromPosixPath(options.root, item.filePath));
     await options.client.uploadAttachment({
-      pageId: item.page.id,
+      pageId: page.id,
       fileName: item.title,
       data: bytes,
       comment: options.message,
@@ -128,7 +152,12 @@ export async function executePush(options: PushOptions & { client: ConfluenceGat
     });
   }
 
-  const pagesWithAttachmentUpdates = new Map(plan.attachments.map((item) => [item.page.id, item.page]));
+  const pagesWithAttachmentUpdates = new Map(
+    plan.attachments.map((item) => {
+      const page = createdPagesByLocalId.get(item.page.id) ?? item.page;
+      return [page.id, page];
+    })
+  );
   for (const page of pagesWithAttachmentUpdates.values()) {
     await refreshAttachmentState({
       root: options.root,

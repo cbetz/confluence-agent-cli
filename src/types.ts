@@ -85,6 +85,8 @@ export type PageAttachmentManifest = {
 export type PageManifestEntry = {
   id: string;
   title: string;
+  isNew?: boolean;
+  parentLocalId?: string;
   folderPath: string;
   markdownPath: string;
   storagePath: string;
@@ -117,6 +119,7 @@ export type LocalPageChange = {
   entry: PageManifestEntry;
   markdownChanged: boolean;
   storageChanged: boolean;
+  isNew?: boolean;
   markdownSha256: string;
   storageSha256: string;
 };
@@ -140,6 +143,7 @@ export type PushSource = "auto" | "markdown" | "storage";
 
 export type PushPlanItem = {
   entry: PageManifestEntry;
+  action: "create" | "update";
   source: Exclude<PushSource, "auto">;
   nextVersionNumber?: number;
   remoteVersionNumber?: number;

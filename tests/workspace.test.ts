@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { fromPosixPath } from "../src/paths.js";
-import { listLocalChanges, pullPageTree, renderDiff } from "../src/workspace.js";
+import { createLocalPage, listLocalChanges, pullPageTree, renderDiff } from "../src/workspace.js";
 import { FakeConfluenceClient, makePage, tempDir } from "./helpers.js";
 
 describe("workspace", () => {
@@ -81,5 +81,35 @@ describe("workspace", () => {
     const diff = await renderDiff(root);
     expect(diff).toContain("Attachment changes:");
     expect(diff).toContain("M api-runbook-100/attachments/evidence.txt");
+  });
+
+  it("creates a pending local child page", async () => {
+    const root = await tempDir();
+    const client = new FakeConfluenceClient({
+      "100": makePage({
+        id: "100",
+        title: "API Runbook",
+        storage: "<p>Body</p>"
+      })
+    });
+    await pullPageTree({ client, rootPageId: "100", outDir: root, maxDepth: 0 });
+
+    const entry = await createLocalPage({
+      root,
+      title: "Incident Runbook",
+      parentId: "100",
+      body: "# Incident Runbook\n\nFirst draft"
+    });
+
+    expect(entry.isNew).toBe(true);
+    expect(entry.parentId).toBe("100");
+    expect(await fs.readFile(fromPosixPath(root, entry.markdownPath), "utf8")).toContain("First draft");
+
+    const changes = await listLocalChanges(root);
+    expect(changes).toHaveLength(1);
+    expect(changes[0]!.isNew).toBe(true);
+
+    const diff = await renderDiff(root);
+    expect(diff).toContain("Incident Runbook");
   });
 });

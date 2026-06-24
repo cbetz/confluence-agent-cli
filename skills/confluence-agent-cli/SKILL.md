@@ -20,18 +20,24 @@ Use this skill when the user asks you to edit, audit, update, summarize, or main
 
 2. Edit `page.md` for ordinary content changes.
 
-3. If `meta.json` has `"lossyConversionRisk": true`, prefer editing `page.storage.html` instead of `page.md` unless the user explicitly accepts a lossy Markdown rewrite.
+3. Create new Confluence pages locally with:
 
-4. Add or update page attachments by placing files in that page's `attachments/` directory.
+   ```bash
+   conf new "Incident Runbook" --parent 123456 --dir wiki
+   ```
 
-5. Before pushing, always run:
+4. If `meta.json` has `"lossyConversionRisk": true`, prefer editing `page.storage.html` instead of `page.md` unless the user explicitly accepts a lossy Markdown rewrite.
+
+5. Add or update page attachments by placing files in that page's `attachments/` directory.
+
+6. Before pushing, always run:
 
    ```bash
    conf diff --dir wiki
    conf push --dir wiki --dry-run
    ```
 
-6. Push only after the dry run looks correct:
+7. Push only after the dry run looks correct:
 
    ```bash
    conf push --dir wiki --message "Describe the change"
@@ -45,3 +51,4 @@ Use this skill when the user asks you to edit, audit, update, summarize, or main
 - If both `page.md` and `page.storage.html` changed for a page, choose one source deliberately with `--source markdown` or `--source storage`.
 - Treat `page.storage.html` as Confluence storage markup, not normal browser HTML.
 - Do not remove local attachment files expecting remote deletion; attachment deletion is not implemented.
+- Do not create a local child under another pending local page; push the parent first.

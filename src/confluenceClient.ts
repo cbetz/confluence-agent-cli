@@ -94,6 +94,13 @@ export interface ConfluenceGateway {
     comment?: string;
     minorEdit?: boolean;
   }): Promise<void>;
+  createPage(input: {
+    title: string;
+    spaceId: string;
+    parentId?: string;
+    storageValue: string;
+    status?: string;
+  }): Promise<ConfluencePage>;
   updatePage(input: {
     id: string;
     title: string;
@@ -188,6 +195,36 @@ export class ConfluenceClient implements ConfluenceGateway {
       },
       body: form
     });
+  }
+
+  async createPage(input: {
+    title: string;
+    spaceId: string;
+    parentId?: string;
+    storageValue: string;
+    status?: string;
+  }): Promise<ConfluencePage> {
+    const body = {
+      status: input.status ?? "current",
+      title: input.title,
+      spaceId: input.spaceId,
+      parentId: input.parentId,
+      body: {
+        representation: "storage",
+        value: input.storageValue
+      },
+      subtype: "live"
+    };
+
+    const response = await this.requestJson("/wiki/api/v2/pages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+
+    return pageSchema.parse(response);
   }
 
   async updatePage(input: {

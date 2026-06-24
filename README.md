@@ -90,6 +90,25 @@ Shows changed pulled pages.
 conf status --dir wiki
 ```
 
+### `conf new <title>`
+
+Creates a pending local page under a pulled parent page.
+
+```bash
+conf new "Incident Runbook" --parent 123456 --dir wiki
+conf new "Incident Runbook" --parent https://example.atlassian.net/wiki/spaces/ENG/pages/123456/Runbook --dir wiki
+```
+
+The new page is created locally first. Edit its `page.md`, add files to its `attachments/` folder if needed, then review and publish:
+
+```bash
+conf diff --dir wiki
+conf push --dir wiki --dry-run
+conf push --dir wiki --message "Create incident runbook"
+```
+
+Current limitation: creating a local child under another pending local page is not supported yet. Create the first page, push it, then add children under the newly pulled/created page.
+
 ### `conf diff`
 
 Prints unified diffs against the last pulled/pushed state.
@@ -111,6 +130,7 @@ Push behavior:
 
 - Checks the live Confluence version before writing.
 - Refuses to overwrite remote edits unless `--force` is passed.
+- Creates pending local pages made with `conf new`.
 - Chooses `page.md` when only Markdown changed.
 - Chooses `page.storage.html` when only storage changed.
 - Refuses when both changed unless `--source markdown` or `--source storage` is provided.
@@ -166,13 +186,14 @@ Implemented:
 - Write local Markdown, raw storage HTML, metadata, manifest, and original snapshots.
 - Pull page attachments into local `attachments/` folders.
 - Upload new or modified attachment files during `conf push`.
+- Create new pages locally with `conf new` and publish them with `conf push`.
 - Show local status and unified diffs.
 - Push Markdown or storage edits with optimistic version checks.
 - Provide a small agent skill in `skills/confluence-agent-cli/SKILL.md`.
 
 Not implemented yet:
 
-- Creating new Confluence pages.
+- Creating children under pending local pages before the parent is pushed.
 - Deleting pages.
 - Deleting remote attachments.
 - Label sync.

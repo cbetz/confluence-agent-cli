@@ -5,7 +5,7 @@ import { ConfluenceClient } from "./confluenceClient.js";
 import { parsePageReference } from "./confluenceUrl.js";
 import { CliError } from "./errors.js";
 import { planPush, executePush } from "./push.js";
-import { listAllLocalChanges, pullPageTree, renderDiff } from "./workspace.js";
+import { createLocalPage, listAllLocalChanges, pullPageTree, renderDiff } from "./workspace.js";
 import type { PushSource } from "./types.js";
 
 const program = new Command();
@@ -68,6 +68,25 @@ program
   });
 
 program
+  .command("new")
+  .description("Create a pending local Confluence page under a pulled parent.")
+  .argument("<title>", "New page title")
+  .requiredOption("--parent <page>", "Parent Confluence page ID or URL already present in the pulled workspace")
+  .option("--dir <dir>", "Pulled workspace directory", "wiki")
+  .option("--body <markdown>", "Initial Markdown body")
+  .action(async (title: string, options: { parent: string; dir: string; body?: string }) => {
+    const parentRef = parsePageReference(options.parent);
+    const entry = await createLocalPage({
+      root: options.dir,
+      title,
+      parentId: parentRef.pageId,
+      body: options.body
+    });
+    console.log(`Created pending page ${entry.id} ${entry.title}`);
+    console.log(`Edit ${entry.markdownPath}, then run \`conf push --dir ${options.dir} --dry-run\`.`);
+  });
+
+program
   .command("status")
   .description("Show locally changed pulled pages.")
   .option("--dir <dir>", "Pulled workspace directory", "wiki")
@@ -85,7 +104,8 @@ program
       ]
         .filter(Boolean)
         .join(", ");
-      console.log(`${change.entry.id} ${change.entry.title} (${files})`);
+      const prefix = change.entry.isNew ? "new page" : change.entry.id;
+      console.log(`${prefix} ${change.entry.title} (${files})`);
     }
 
     for (const attachment of changes.attachments) {
@@ -147,7 +167,8 @@ program
 
       for (const item of plan.pages) {
         const versionText = item.nextVersionNumber ? ` -> v${item.nextVersionNumber}` : "";
-        console.log(`${options.dryRun ? "Would push" : "Pushed"} ${item.entry.id} ${item.entry.title} from ${item.source}${versionText}`);
+        const verb = item.action === "create" ? (options.dryRun ? "Would create" : "Created") : options.dryRun ? "Would push" : "Pushed";
+        console.log(`${verb} ${item.entry.id} ${item.entry.title} from ${item.source}${versionText}`);
         if (item.warning) {
           console.log(`  warning: ${item.warning}`);
         }

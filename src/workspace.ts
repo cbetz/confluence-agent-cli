@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createTwoFilesPatch } from "diff";
-import { hasLossyConversionRisk, storageToMarkdown } from "./conversion.js";
+import { hasLossyConversionRisk, markdownToStorage, storageToMarkdown } from "./conversion.js";
 import { CliError } from "./errors.js";
 import { sha256 } from "./hash.js";
 import {
@@ -83,6 +83,77 @@ export async function pullPageTree(input: {
   return manifest;
 }
 
+export async function createLocalPage(input: {
+  root: string;
+  title: string;
+  parentId: string;
+  body?: string;
+}): Promise<PageManifestEntry> {
+  const manifest = await readManifest(input.root);
+  const parent = manifest.pages.find((entry) => entry.id === input.parentId);
+
+  if (!parent) {
+    throw new CliError(`Parent page ${input.parentId} is not in ${input.root}. Pull the parent page tree first.`);
+  }
+
+  if (parent.isNew) {
+    throw new CliError("Creating a local child under another pending local page is not supported yet.");
+  }
+
+  const localId = `local-${Date.now().toString(36)}`;
+  const folder = nextAvailablePageFolder(input.root, fromPosixPath(input.root, parent.folderPath), input.title, localId);
+  await fs.mkdir(folder, { recursive: true });
+
+  const markdown = `${input.body?.trim() || `# ${input.title}`}\n`;
+  const storage = markdownToStorage(markdown);
+  const markdownPath = path.join(folder, "page.md");
+  const storagePath = path.join(folder, "page.storage.html");
+  const metaPath = path.join(folder, "meta.json");
+  const attachmentsPath = path.join(folder, "attachments");
+  const attachmentsMetaPath = path.join(folder, "attachments.json");
+  const pulledAt = new Date().toISOString();
+
+  await fs.mkdir(attachmentsPath, { recursive: true });
+  await fs.writeFile(markdownPath, markdown, "utf8");
+  await fs.writeFile(storagePath, storage, "utf8");
+  await fs.writeFile(originalMarkdownPath(input.root, localId), "", "utf8");
+  await fs.writeFile(originalStoragePath(input.root, localId), "", "utf8");
+
+  const entry: PageManifestEntry = {
+    id: localId,
+    title: input.title,
+    isNew: true,
+    parentLocalId: parent.id,
+    folderPath: toPosixPath(path.relative(input.root, folder)),
+    markdownPath: toPosixPath(path.relative(input.root, markdownPath)),
+    storagePath: toPosixPath(path.relative(input.root, storagePath)),
+    metaPath: toPosixPath(path.relative(input.root, metaPath)),
+    attachmentsPath: toPosixPath(path.relative(input.root, attachmentsPath)),
+    attachmentsMetaPath: toPosixPath(path.relative(input.root, attachmentsMetaPath)),
+    spaceId: parent.spaceId,
+    parentId: parent.id,
+    versionNumber: 0,
+    lastPulledMarkdownSha256: sha256(""),
+    lastPulledStorageSha256: sha256(""),
+    lossyConversionRisk: false,
+    pulledAt
+  };
+
+  const attachmentManifest: PageAttachmentManifest = {
+    schemaVersion: 1,
+    pageId: localId,
+    attachments: []
+  };
+  await fs.writeFile(attachmentsMetaPath, `${JSON.stringify(attachmentManifest, null, 2)}\n`, "utf8");
+  await writePageMeta(input.root, entry, "");
+
+  manifest.pages.push(entry);
+  manifest.pulledAt = pulledAt;
+  await fs.writeFile(manifestPath(input.root), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+  return entry;
+}
+
 export async function listLocalChanges(root: string): Promise<LocalPageChange[]> {
   const manifest = await readManifest(root);
   const changes: LocalPageChange[] = [];
@@ -92,14 +163,15 @@ export async function listLocalChanges(root: string): Promise<LocalPageChange[]>
     const storage = await fs.readFile(fromPosixPath(root, entry.storagePath), "utf8");
     const markdownSha256 = sha256(markdown);
     const storageSha256 = sha256(storage);
-    const markdownChanged = markdownSha256 !== entry.lastPulledMarkdownSha256;
-    const storageChanged = storageSha256 !== entry.lastPulledStorageSha256;
+    const markdownChanged = entry.isNew || markdownSha256 !== entry.lastPulledMarkdownSha256;
+    const storageChanged = !entry.isNew && storageSha256 !== entry.lastPulledStorageSha256;
 
     if (markdownChanged || storageChanged) {
       changes.push({
         entry,
         markdownChanged,
         storageChanged,
+        isNew: entry.isNew,
         markdownSha256,
         storageSha256
       });
@@ -241,6 +313,56 @@ export async function refreshPageState(input: {
   };
   await writePageMeta(input.root, updated);
   await updateManifestEntry(input.root, updated);
+  return updated;
+}
+
+export async function finalizeCreatedPage(input: {
+  root: string;
+  localEntry: PageManifestEntry;
+  createdPage: ConfluencePage;
+  storage: string;
+  markdown: string;
+  confluenceUrl?: string;
+}): Promise<PageManifestEntry> {
+  const pulledAt = new Date().toISOString();
+  const updated: PageManifestEntry = {
+    ...input.localEntry,
+    id: input.createdPage.id,
+    title: input.createdPage.title,
+    isNew: undefined,
+    parentLocalId: undefined,
+    spaceId: input.createdPage.spaceId,
+    parentId: input.createdPage.parentId,
+    versionNumber: input.createdPage.version.number,
+    pulledAt,
+    lastPulledMarkdownSha256: sha256(input.markdown),
+    lastPulledStorageSha256: sha256(input.storage),
+    lossyConversionRisk: hasLossyConversionRisk(input.storage)
+  };
+
+  await fs.writeFile(originalMarkdownPath(input.root, updated.id), input.markdown, "utf8");
+  await fs.writeFile(originalStoragePath(input.root, updated.id), input.storage, "utf8");
+
+  const attachmentManifest = await readPageAttachmentManifest(input.root, input.localEntry);
+  const updatedAttachmentManifest: PageAttachmentManifest = {
+    ...attachmentManifest,
+    pageId: updated.id,
+    attachments: attachmentManifest.attachments.map((attachment) => ({
+      ...attachment,
+      pageId: updated.id
+    }))
+  };
+  await fs.writeFile(fromPosixPath(input.root, updated.attachmentsMetaPath ?? `${updated.folderPath}/attachments.json`), `${JSON.stringify(updatedAttachmentManifest, null, 2)}\n`, "utf8");
+
+  const manifest = await readManifest(input.root);
+  manifest.pages = manifest.pages.map((entry) => (entry.id === input.localEntry.id ? updated : entry));
+  manifest.pulledAt = pulledAt;
+  await fs.writeFile(manifestPath(input.root), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await writePageMeta(input.root, updated, input.confluenceUrl);
+
+  await removeIfExists(originalMarkdownPath(input.root, input.localEntry.id));
+  await removeIfExists(originalStoragePath(input.root, input.localEntry.id));
+
   return updated;
 }
 
@@ -419,4 +541,18 @@ function uniqueAttachmentFileName(title: string, id: string, usedFileNames: Set<
   const withId = `${parsed.name}-${id}${parsed.ext}`;
   usedFileNames.add(withId);
   return withId;
+}
+
+function nextAvailablePageFolder(root: string, parentFolder: string, title: string, id: string): string {
+  return path.join(parentFolder, pageFolderName(title, id));
+}
+
+async function removeIfExists(filePath: string): Promise<void> {
+  try {
+    await fs.unlink(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
 }

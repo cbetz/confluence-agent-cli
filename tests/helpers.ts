@@ -34,6 +34,12 @@ export class FakeConfluenceClient implements ConfluenceGateway {
     message?: string;
     minorEdit?: boolean;
   }> = [];
+  readonly createdPages: Array<{
+    title: string;
+    spaceId: string;
+    parentId?: string;
+    storageValue: string;
+  }> = [];
   readonly attachmentUploads: Array<{
     pageId: string;
     fileName: string;
@@ -97,6 +103,26 @@ export class FakeConfluenceClient implements ConfluenceGateway {
     };
     this.attachments[input.pageId] = [...current.filter((attachment) => attachment.title !== input.fileName), updated];
     this.attachmentBytes[id] = input.data;
+  }
+
+  async createPage(input: {
+    title: string;
+    spaceId: string;
+    parentId?: string;
+    storageValue: string;
+  }): Promise<ConfluencePage> {
+    this.createdPages.push(input);
+    const id = String(1000 + this.createdPages.length);
+    const created = makePage({
+      id,
+      title: input.title,
+      spaceId: input.spaceId,
+      parentId: input.parentId,
+      storage: input.storageValue,
+      version: { number: 1 }
+    });
+    this.pages[id] = created;
+    return created;
   }
 
   async updatePage(input: {
