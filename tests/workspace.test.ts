@@ -35,4 +35,51 @@ describe("workspace", () => {
     expect(diff).toContain("+New step");
     expect(await fs.readFile(path.join(root, ".confagent", "manifest.json"), "utf8")).toContain("API Runbook");
   });
+
+  it("pulls page attachments and tracks attachment changes", async () => {
+    const root = await tempDir();
+    const client = new FakeConfluenceClient(
+      {
+        "100": makePage({
+          id: "100",
+          title: "API Runbook",
+          storage: "<p>Body</p>"
+        })
+      },
+      {},
+      {
+        "100": [
+          {
+            id: "att-1",
+            status: "current",
+            title: "evidence.txt",
+            pageId: "100",
+            mediaType: "text/plain",
+            fileSize: 8,
+            downloadLink: "/download/att-1",
+            version: { number: 1 }
+          }
+        ]
+      },
+      {
+        "att-1": new TextEncoder().encode("original")
+      }
+    );
+
+    const manifest = await pullPageTree({
+      client,
+      rootPageId: "100",
+      outDir: root,
+      maxDepth: 0
+    });
+
+    const page = manifest.pages[0]!;
+    const attachmentPath = fromPosixPath(root, `${page.folderPath}/attachments/evidence.txt`);
+    expect(await fs.readFile(attachmentPath, "utf8")).toBe("original");
+
+    await fs.writeFile(attachmentPath, "updated", "utf8");
+    const diff = await renderDiff(root);
+    expect(diff).toContain("Attachment changes:");
+    expect(diff).toContain("M api-runbook-100/attachments/evidence.txt");
+  });
 });

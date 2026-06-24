@@ -27,12 +27,29 @@ export function pageFolderName(title: string, id: string): string {
   return `${slugify(title)}-${id}`;
 }
 
+export function attachmentFileName(title: string): string {
+  const cleaned = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^\.+/, "")
+    .slice(0, 120);
+
+  return cleaned.length > 0 ? cleaned : "attachment";
+}
+
 export function originalMarkdownPath(root: string, id: string): string {
   return path.join(root, STATE_DIR, ORIGINALS_DIR, `${id}.md`);
 }
 
 export function originalStoragePath(root: string, id: string): string {
   return path.join(root, STATE_DIR, ORIGINALS_DIR, `${id}.storage.html`);
+}
+
+export function originalAttachmentPath(root: string, pageId: string, fileName: string): string {
+  return path.join(root, STATE_DIR, ORIGINALS_DIR, "attachments", pageId, fileName);
 }
 
 export function manifestPath(root: string): string {

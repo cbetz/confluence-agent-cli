@@ -30,12 +30,17 @@ wiki/
     manifest.json
     originals/
   api-runbook-123456/
+    attachments/
+      screenshot.png
+    attachments.json
     page.md
     page.storage.html
     meta.json
 ```
 
 Agents usually edit `page.md`. If a page contains Confluence macro or namespaced storage markup, the CLI marks it as a lossy conversion risk and refuses Markdown-based pushes by default. In those cases, edit `page.storage.html` or pass `--allow-lossy` deliberately.
+
+Attachments are pulled into each page's `attachments/` directory. Add a file there or modify an existing file, then run `conf push --dry-run` before publishing. Local deletion of attachments is intentionally ignored in the current version; remote attachment deletion is not implemented yet.
 
 ## Commands
 
@@ -110,6 +115,8 @@ Push behavior:
 - Chooses `page.storage.html` when only storage changed.
 - Refuses when both changed unless `--source markdown` or `--source storage` is provided.
 - Refuses lossy Markdown pushes unless `--allow-lossy` is provided.
+- Uploads new or modified files in page `attachments/` folders.
+- Refuses to overwrite remotely changed attachments unless `--force` is passed.
 
 ## Install For Local Development
 
@@ -157,6 +164,8 @@ Implemented:
 - Pull by pasted Confluence page URL or numeric page ID.
 - Verify auth and page access with `conf doctor`.
 - Write local Markdown, raw storage HTML, metadata, manifest, and original snapshots.
+- Pull page attachments into local `attachments/` folders.
+- Upload new or modified attachment files during `conf push`.
 - Show local status and unified diffs.
 - Push Markdown or storage edits with optimistic version checks.
 - Provide a small agent skill in `skills/confluence-agent-cli/SKILL.md`.
@@ -165,7 +174,7 @@ Not implemented yet:
 
 - Creating new Confluence pages.
 - Deleting pages.
-- Attachment download/upload.
+- Deleting remote attachments.
 - Label sync.
 - Comment sync.
 - OAuth device flow.
@@ -176,5 +185,7 @@ The first version uses Confluence Cloud REST API v2 page endpoints:
 
 - [Get page by ID and update page](https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-page/)
 - [Get child pages](https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-children/)
+- [Get page attachments](https://developer.atlassian.com/cloud/confluence/rest/v2/api-group-attachment/)
+- [Create or update attachment](https://developer.atlassian.com/cloud/confluence/rest/v1/api-group-content---attachments/)
 
 Confluence storage format is XHTML-like, and Markdown conversion can be lossy for macros or rich Confluence-specific elements. The raw `page.storage.html` file is included for that reason.

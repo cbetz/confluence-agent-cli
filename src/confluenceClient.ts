@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CliError } from "./errors.js";
-import type { AuthConfig, ChildPage, ConfluencePage } from "./types.js";
+import type { AuthConfig, ChildPage, ConfluenceAttachment, ConfluencePage } from "./types.js";
 
 const pageSchema = z.object({
   id: z.coerce.string(),
@@ -45,10 +45,55 @@ const childrenResponseSchema = z.object({
     .optional()
 });
 
+const attachmentSchema = z.object({
+  id: z.coerce.string(),
+  status: z.string().default("current"),
+  title: z.string(),
+  pageId: z.coerce.string().optional(),
+  mediaType: z.string().optional(),
+  comment: z.string().optional(),
+  fileSize: z.number().optional(),
+  downloadLink: z.string().optional(),
+  webuiLink: z.string().optional(),
+  version: z
+    .object({
+      number: z.number(),
+      message: z.string().optional(),
+      minorEdit: z.boolean().optional(),
+      createdAt: z.string().optional()
+    })
+    .default({ number: 1 }),
+  _links: z
+    .object({
+      download: z.string().optional(),
+      webui: z.string().optional()
+    })
+    .optional()
+});
+
+const attachmentsResponseSchema = z.object({
+  results: z.array(attachmentSchema),
+  _links: z
+    .object({
+      next: z.string().optional(),
+      base: z.string().optional()
+    })
+    .optional()
+});
+
 export interface ConfluenceGateway {
   readonly baseUrl: string;
   getPage(id: string): Promise<ConfluencePage>;
   listChildPages(id: string): Promise<ChildPage[]>;
+  listPageAttachments(pageId: string): Promise<ConfluenceAttachment[]>;
+  downloadAttachment(attachment: ConfluenceAttachment): Promise<Uint8Array>;
+  uploadAttachment(input: {
+    pageId: string;
+    fileName: string;
+    data: Uint8Array;
+    comment?: string;
+    minorEdit?: boolean;
+  }): Promise<void>;
   updatePage(input: {
     id: string;
     title: string;
@@ -92,6 +137,57 @@ export class ConfluenceClient implements ConfluenceGateway {
     }
 
     return pages;
+  }
+
+  async listPageAttachments(pageId: string): Promise<ConfluenceAttachment[]> {
+    const attachments: ConfluenceAttachment[] = [];
+    let next: string | undefined = `/wiki/api/v2/pages/${encodeURIComponent(pageId)}/attachments?limit=50`;
+
+    while (next) {
+      const response = attachmentsResponseSchema.parse(await this.requestJson(next));
+      attachments.push(...response.results);
+      next = response._links?.next;
+    }
+
+    return attachments;
+  }
+
+  async downloadAttachment(attachment: ConfluenceAttachment): Promise<Uint8Array> {
+    const downloadLink = attachment.downloadLink ?? attachment._links?.download;
+    if (!downloadLink) {
+      throw new CliError(`Attachment ${attachment.title} (${attachment.id}) does not include a download link.`);
+    }
+
+    return this.requestBytes(downloadLink);
+  }
+
+  async uploadAttachment(input: {
+    pageId: string;
+    fileName: string;
+    data: Uint8Array;
+    comment?: string;
+    minorEdit?: boolean;
+  }): Promise<void> {
+    const form = new FormData();
+    const fileBuffer = new ArrayBuffer(input.data.byteLength);
+    new Uint8Array(fileBuffer).set(input.data);
+    form.append("file", new Blob([fileBuffer]), input.fileName);
+
+    if (input.comment) {
+      form.append("comment", input.comment);
+    }
+
+    if (input.minorEdit !== undefined) {
+      form.append("minorEdit", String(input.minorEdit));
+    }
+
+    await this.requestJson(`/wiki/rest/api/content/${encodeURIComponent(input.pageId)}/child/attachment?status=current`, {
+      method: "PUT",
+      headers: {
+        "X-Atlassian-Token": "nocheck"
+      },
+      body: form
+    });
   }
 
   async updatePage(input: {
@@ -162,12 +258,39 @@ export class ConfluenceClient implements ConfluenceGateway {
     return response.json();
   }
 
+  private async requestBytes(pathOrUrl: string, init: RequestInit = {}): Promise<Uint8Array> {
+    const url = this.resolveUrl(pathOrUrl);
+    const headers = new Headers(init.headers);
+    headers.set("Authorization", this.authHeader());
+
+    const response = await fetch(url, {
+      ...init,
+      headers
+    });
+
+    if (!response.ok) {
+      let detail = "";
+      try {
+        detail = await response.text();
+      } catch {
+        detail = response.statusText;
+      }
+
+      throw new CliError(formatApiError(url, response.status, response.statusText, detail));
+    }
+
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
   private resolveUrl(pathOrUrl: string): string {
     if (pathOrUrl.startsWith("http://") || pathOrUrl.startsWith("https://")) {
       return pathOrUrl;
     }
 
     if (pathOrUrl.startsWith("/")) {
+      if (pathOrUrl.startsWith("/rest/") || pathOrUrl.startsWith("/download/")) {
+        return `${this.config.baseUrl}/wiki${pathOrUrl}`;
+      }
       return `${this.config.baseUrl}${pathOrUrl}`;
     }
 

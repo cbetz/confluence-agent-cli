@@ -5,8 +5,10 @@ import { hasLossyConversionRisk, storageToMarkdown } from "./conversion.js";
 import { CliError } from "./errors.js";
 import { sha256 } from "./hash.js";
 import {
+  attachmentFileName,
   fromPosixPath,
   manifestPath,
+  originalAttachmentPath,
   originalMarkdownPath,
   originalStoragePath,
   pageFolderName,
@@ -15,8 +17,12 @@ import {
 } from "./paths.js";
 import type { ConfluenceGateway } from "./confluenceClient.js";
 import type {
+  AttachmentManifestEntry,
   ConfluencePage,
+  LocalAttachmentChange,
+  LocalChanges,
   LocalPageChange,
+  PageAttachmentManifest,
   PageManifestEntry,
   PageMeta,
   PullManifest
@@ -103,11 +109,68 @@ export async function listLocalChanges(root: string): Promise<LocalPageChange[]>
   return changes;
 }
 
+export async function listAllLocalChanges(root: string): Promise<LocalChanges> {
+  return {
+    pages: await listLocalChanges(root),
+    attachments: await listLocalAttachmentChanges(root)
+  };
+}
+
+export async function listLocalAttachmentChanges(root: string): Promise<LocalAttachmentChange[]> {
+  const manifest = await readManifest(root);
+  const changes: LocalAttachmentChange[] = [];
+
+  for (const page of manifest.pages) {
+    const attachmentManifest = await readPageAttachmentManifest(root, page);
+    const byFileName = new Map(attachmentManifest.attachments.map((attachment) => [attachment.fileName, attachment]));
+    const attachmentsDir = pageAttachmentsDir(root, page);
+    const names = await listFilesIfExists(attachmentsDir);
+
+    for (const fileName of names) {
+      const filePath = path.join(attachmentsDir, fileName);
+      const stat = await fs.stat(filePath);
+      if (!stat.isFile()) {
+        continue;
+      }
+
+      const bytes = await fs.readFile(filePath);
+      const currentSha256 = sha256(bytes);
+      const attachment = byFileName.get(fileName);
+
+      if (!attachment) {
+        changes.push({
+          page,
+          title: fileName,
+          fileName,
+          filePath: toPosixPath(path.relative(root, filePath)),
+          sha256: currentSha256,
+          kind: "new"
+        });
+        continue;
+      }
+
+      if (currentSha256 !== attachment.lastPulledSha256) {
+        changes.push({
+          page,
+          attachment,
+          title: attachment.title,
+          fileName,
+          filePath: attachment.filePath,
+          sha256: currentSha256,
+          kind: "modified"
+        });
+      }
+    }
+  }
+
+  return changes;
+}
+
 export async function renderDiff(root: string): Promise<string> {
-  const changes = await listLocalChanges(root);
+  const changes = await listAllLocalChanges(root);
   const patches: string[] = [];
 
-  for (const change of changes) {
+  for (const change of changes.pages) {
     if (change.markdownChanged) {
       const original = await fs.readFile(originalMarkdownPath(root, change.entry.id), "utf8");
       const current = await fs.readFile(fromPosixPath(root, change.entry.markdownPath), "utf8");
@@ -137,6 +200,14 @@ export async function renderDiff(root: string): Promise<string> {
         )
       );
     }
+  }
+
+  if (changes.attachments.length > 0) {
+    const lines = ["Attachment changes:"];
+    for (const attachment of changes.attachments) {
+      lines.push(`${attachment.kind === "new" ? "A" : "M"} ${attachment.filePath}`);
+    }
+    patches.push(lines.join("\n"));
   }
 
   return patches.join("\n");
@@ -173,6 +244,20 @@ export async function refreshPageState(input: {
   return updated;
 }
 
+export async function refreshAttachmentState(input: {
+  root: string;
+  client: ConfluenceGateway;
+  page: PageManifestEntry;
+}): Promise<PageAttachmentManifest> {
+  return writePageAttachments({
+    root: input.root,
+    client: input.client,
+    page: input.page,
+    folder: fromPosixPath(input.root, input.page.folderPath),
+    pulledAt: new Date().toISOString()
+  });
+}
+
 async function writePulledPage(input: {
   client: ConfluenceGateway;
   root: string;
@@ -188,6 +273,8 @@ async function writePulledPage(input: {
   const markdownPath = path.join(folder, "page.md");
   const storagePath = path.join(folder, "page.storage.html");
   const metaPath = path.join(folder, "meta.json");
+  const attachmentsPath = path.join(folder, "attachments");
+  const attachmentsMetaPath = path.join(folder, "attachments.json");
 
   await fs.writeFile(markdownPath, markdown, "utf8");
   await fs.writeFile(storagePath, storage, "utf8");
@@ -201,6 +288,8 @@ async function writePulledPage(input: {
     markdownPath: toPosixPath(path.relative(input.root, markdownPath)),
     storagePath: toPosixPath(path.relative(input.root, storagePath)),
     metaPath: toPosixPath(path.relative(input.root, metaPath)),
+    attachmentsPath: toPosixPath(path.relative(input.root, attachmentsPath)),
+    attachmentsMetaPath: toPosixPath(path.relative(input.root, attachmentsMetaPath)),
     spaceId: input.page.spaceId,
     parentId: input.page.parentId,
     versionNumber: input.page.version.number,
@@ -211,6 +300,13 @@ async function writePulledPage(input: {
   };
 
   await writePageMeta(input.root, entry, input.client.pageUrl(input.page.id));
+  await writePageAttachments({
+    root: input.root,
+    client: input.client,
+    page: entry,
+    folder,
+    pulledAt: input.pulledAt
+  });
   return entry;
 }
 
@@ -226,4 +322,101 @@ async function writePageMeta(root: string, entry: PageManifestEntry, confluenceU
 
 async function readExistingMeta(root: string, entry: PageManifestEntry): Promise<PageMeta> {
   return JSON.parse(await fs.readFile(fromPosixPath(root, entry.metaPath), "utf8")) as PageMeta;
+}
+
+async function writePageAttachments(input: {
+  root: string;
+  client: ConfluenceGateway;
+  page: PageManifestEntry;
+  folder: string;
+  pulledAt: string;
+}): Promise<PageAttachmentManifest> {
+  const attachmentsDir = pageAttachmentsDir(input.root, input.page);
+  await fs.mkdir(attachmentsDir, { recursive: true });
+  await fs.mkdir(path.join(input.root, STATE_DIR, "originals", "attachments", input.page.id), { recursive: true });
+
+  const remoteAttachments = await input.client.listPageAttachments(input.page.id);
+  const usedFileNames = new Set<string>();
+  const attachments: AttachmentManifestEntry[] = [];
+
+  for (const attachment of remoteAttachments) {
+    const fileName = uniqueAttachmentFileName(attachment.title, attachment.id, usedFileNames);
+    const bytes = await input.client.downloadAttachment(attachment);
+    const filePath = path.join(attachmentsDir, fileName);
+    const originalPath = originalAttachmentPath(input.root, input.page.id, fileName);
+
+    await fs.writeFile(filePath, bytes);
+    await fs.writeFile(originalPath, bytes);
+
+    attachments.push({
+      id: attachment.id,
+      pageId: input.page.id,
+      title: attachment.title,
+      fileName,
+      filePath: toPosixPath(path.relative(input.root, filePath)),
+      mediaType: attachment.mediaType,
+      comment: attachment.comment,
+      fileSize: attachment.fileSize,
+      versionNumber: attachment.version.number,
+      downloadLink: attachment.downloadLink ?? attachment._links?.download,
+      webuiLink: attachment.webuiLink ?? attachment._links?.webui,
+      lastPulledSha256: sha256(bytes),
+      pulledAt: input.pulledAt
+    });
+  }
+
+  const manifest: PageAttachmentManifest = {
+    schemaVersion: 1,
+    pageId: input.page.id,
+    attachments
+  };
+  await fs.writeFile(pageAttachmentsMetaPath(input.root, input.page), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  return manifest;
+}
+
+export async function readPageAttachmentManifest(root: string, page: PageManifestEntry): Promise<PageAttachmentManifest> {
+  try {
+    return JSON.parse(await fs.readFile(pageAttachmentsMetaPath(root, page), "utf8")) as PageAttachmentManifest;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return {
+        schemaVersion: 1,
+        pageId: page.id,
+        attachments: []
+      };
+    }
+    throw error;
+  }
+}
+
+function pageAttachmentsDir(root: string, page: PageManifestEntry): string {
+  return fromPosixPath(root, page.attachmentsPath ?? `${page.folderPath}/attachments`);
+}
+
+function pageAttachmentsMetaPath(root: string, page: PageManifestEntry): string {
+  return fromPosixPath(root, page.attachmentsMetaPath ?? `${page.folderPath}/attachments.json`);
+}
+
+async function listFilesIfExists(dir: string): Promise<string[]> {
+  try {
+    return await fs.readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+}
+
+function uniqueAttachmentFileName(title: string, id: string, usedFileNames: Set<string>): string {
+  const safe = attachmentFileName(title);
+  if (!usedFileNames.has(safe)) {
+    usedFileNames.add(safe);
+    return safe;
+  }
+
+  const parsed = path.parse(safe);
+  const withId = `${parsed.name}-${id}${parsed.ext}`;
+  usedFileNames.add(withId);
+  return withId;
 }

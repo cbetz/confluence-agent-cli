@@ -22,14 +22,16 @@ Use this skill when the user asks you to edit, audit, update, summarize, or main
 
 3. If `meta.json` has `"lossyConversionRisk": true`, prefer editing `page.storage.html` instead of `page.md` unless the user explicitly accepts a lossy Markdown rewrite.
 
-4. Before pushing, always run:
+4. Add or update page attachments by placing files in that page's `attachments/` directory.
+
+5. Before pushing, always run:
 
    ```bash
    conf diff --dir wiki
    conf push --dir wiki --dry-run
    ```
 
-5. Push only after the dry run looks correct:
+6. Push only after the dry run looks correct:
 
    ```bash
    conf push --dir wiki --message "Describe the change"
@@ -42,3 +44,4 @@ Use this skill when the user asks you to edit, audit, update, summarize, or main
 - Do not pass `--allow-lossy` unless the user explicitly accepts possible Confluence macro/storage loss.
 - If both `page.md` and `page.storage.html` changed for a page, choose one source deliberately with `--source markdown` or `--source storage`.
 - Treat `page.storage.html` as Confluence storage markup, not normal browser HTML.
+- Do not remove local attachment files expecting remote deletion; attachment deletion is not implemented.

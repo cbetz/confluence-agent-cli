@@ -1,6 +1,6 @@
 {
   "name": "confluence-agent-cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Git-like Confluence pull/diff/push workflow for coding agents.",
   "type": "module",
   "author": "Chris Betz",

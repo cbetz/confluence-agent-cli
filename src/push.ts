@@ -3,8 +3,21 @@ import { markdownToStorage, storageToMarkdown } from "./conversion.js";
 import type { ConfluenceGateway } from "./confluenceClient.js";
 import { CliError } from "./errors.js";
 import { fromPosixPath } from "./paths.js";
-import { listLocalChanges, refreshPageState } from "./workspace.js";
-import type { LocalPageChange, PushPlanItem, PushSource } from "./types.js";
+import {
+  listLocalAttachmentChanges,
+  listLocalChanges,
+  readPageAttachmentManifest,
+  refreshAttachmentState,
+  refreshPageState
+} from "./workspace.js";
+import type {
+  AttachmentPushPlanItem,
+  LocalAttachmentChange,
+  LocalPageChange,
+  PushPlan,
+  PushPlanItem,
+  PushSource
+} from "./types.js";
 
 type PushOptions = {
   root: string;
@@ -17,9 +30,10 @@ type PushOptions = {
   minorEdit?: boolean;
 };
 
-export async function planPush(options: PushOptions): Promise<PushPlanItem[]> {
+export async function planPush(options: PushOptions): Promise<PushPlan> {
   const changes = await listLocalChanges(options.root);
-  const items: PushPlanItem[] = [];
+  const attachments = await listLocalAttachmentChanges(options.root);
+  const pageItems: PushPlanItem[] = [];
 
   for (const change of changes) {
     const source = resolveSource(change, options.source, options.allowLossy);
@@ -43,7 +57,7 @@ export async function planPush(options: PushOptions): Promise<PushPlanItem[]> {
       nextVersionNumber = remoteVersionNumber + 1;
     }
 
-    items.push({
+    pageItems.push({
       entry: change.entry,
       source,
       remoteVersionNumber,
@@ -55,13 +69,18 @@ export async function planPush(options: PushOptions): Promise<PushPlanItem[]> {
     });
   }
 
-  return items;
+  const attachmentItems = await planAttachmentPush(options, attachments);
+
+  return {
+    pages: pageItems,
+    attachments: attachmentItems
+  };
 }
 
-export async function executePush(options: PushOptions & { client: ConfluenceGateway }): Promise<PushPlanItem[]> {
-  const items = await planPush(options);
+export async function executePush(options: PushOptions & { client: ConfluenceGateway }): Promise<PushPlan> {
+  const plan = await planPush(options);
 
-  for (const item of items) {
+  for (const item of plan.pages) {
     const markdownPath = fromPosixPath(options.root, item.entry.markdownPath);
     const storagePath = fromPosixPath(options.root, item.entry.storagePath);
     let markdown: string;
@@ -98,7 +117,82 @@ export async function executePush(options: PushOptions & { client: ConfluenceGat
     });
   }
 
+  for (const item of plan.attachments) {
+    const bytes = await fs.readFile(fromPosixPath(options.root, item.filePath));
+    await options.client.uploadAttachment({
+      pageId: item.page.id,
+      fileName: item.title,
+      data: bytes,
+      comment: options.message,
+      minorEdit: options.minorEdit
+    });
+  }
+
+  const pagesWithAttachmentUpdates = new Map(plan.attachments.map((item) => [item.page.id, item.page]));
+  for (const page of pagesWithAttachmentUpdates.values()) {
+    await refreshAttachmentState({
+      root: options.root,
+      client: options.client,
+      page
+    });
+  }
+
+  return plan;
+}
+
+async function planAttachmentPush(
+  options: PushOptions,
+  changes: LocalAttachmentChange[]
+): Promise<AttachmentPushPlanItem[]> {
+  if (options.remoteCheck && changes.length > 0 && !options.client) {
+    throw new CliError("Remote attachment check requires Confluence credentials.");
+  }
+
+  const items: AttachmentPushPlanItem[] = [];
+  const remoteAttachmentsByPage = new Map<string, Map<string, number>>();
+
+  for (const change of changes) {
+    if (options.remoteCheck && change.kind === "modified") {
+      const remoteByTitle = await getRemoteAttachmentVersions(options.client!, remoteAttachmentsByPage, change.page.id);
+      const remoteVersion = remoteByTitle.get(change.title);
+      const localVersion = change.attachment?.versionNumber;
+
+      if (remoteVersion !== undefined && localVersion !== undefined && remoteVersion !== localVersion && !options.force) {
+        throw new CliError(
+          `Remote attachment changed since pull: ${change.title} on ${change.page.title} is at version ${remoteVersion}, local base is ${localVersion}. Pull again or use --force.`
+        );
+      }
+    }
+
+    const currentManifest = await readPageAttachmentManifest(options.root, change.page);
+    const known = currentManifest.attachments.find((attachment) => attachment.fileName === change.fileName);
+    items.push({
+      page: change.page,
+      attachment: known,
+      title: known?.title ?? change.title,
+      fileName: change.fileName,
+      filePath: change.filePath,
+      kind: change.kind
+    });
+  }
+
   return items;
+}
+
+async function getRemoteAttachmentVersions(
+  client: ConfluenceGateway,
+  cache: Map<string, Map<string, number>>,
+  pageId: string
+): Promise<Map<string, number>> {
+  const cached = cache.get(pageId);
+  if (cached) {
+    return cached;
+  }
+
+  const remote = await client.listPageAttachments(pageId);
+  const byTitle = new Map(remote.map((attachment) => [attachment.title, attachment.version.number]));
+  cache.set(pageId, byTitle);
+  return byTitle;
 }
 
 function resolveSource(

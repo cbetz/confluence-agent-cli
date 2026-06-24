@@ -38,6 +38,50 @@ export type ChildPage = {
   childPosition?: number;
 };
 
+export type ConfluenceAttachment = {
+  id: string;
+  status: string;
+  title: string;
+  pageId?: string;
+  mediaType?: string;
+  comment?: string;
+  fileSize?: number;
+  downloadLink?: string;
+  webuiLink?: string;
+  version: {
+    number: number;
+    message?: string;
+    minorEdit?: boolean;
+    createdAt?: string;
+  };
+  _links?: {
+    download?: string;
+    webui?: string;
+  };
+};
+
+export type AttachmentManifestEntry = {
+  id?: string;
+  pageId: string;
+  title: string;
+  fileName: string;
+  filePath: string;
+  mediaType?: string;
+  comment?: string;
+  fileSize?: number;
+  versionNumber?: number;
+  downloadLink?: string;
+  webuiLink?: string;
+  lastPulledSha256: string;
+  pulledAt: string;
+};
+
+export type PageAttachmentManifest = {
+  schemaVersion: 1;
+  pageId: string;
+  attachments: AttachmentManifestEntry[];
+};
+
 export type PageManifestEntry = {
   id: string;
   title: string;
@@ -45,6 +89,8 @@ export type PageManifestEntry = {
   markdownPath: string;
   storagePath: string;
   metaPath: string;
+  attachmentsPath?: string;
+  attachmentsMetaPath?: string;
   spaceId: string;
   parentId?: string;
   versionNumber: number;
@@ -75,6 +121,21 @@ export type LocalPageChange = {
   storageSha256: string;
 };
 
+export type LocalAttachmentChange = {
+  page: PageManifestEntry;
+  attachment?: AttachmentManifestEntry;
+  title: string;
+  fileName: string;
+  filePath: string;
+  sha256: string;
+  kind: "new" | "modified";
+};
+
+export type LocalChanges = {
+  pages: LocalPageChange[];
+  attachments: LocalAttachmentChange[];
+};
+
 export type PushSource = "auto" | "markdown" | "storage";
 
 export type PushPlanItem = {
@@ -83,4 +144,18 @@ export type PushPlanItem = {
   nextVersionNumber?: number;
   remoteVersionNumber?: number;
   warning?: string;
+};
+
+export type AttachmentPushPlanItem = {
+  page: PageManifestEntry;
+  attachment?: AttachmentManifestEntry;
+  title: string;
+  fileName: string;
+  filePath: string;
+  kind: "new" | "modified";
+};
+
+export type PushPlan = {
+  pages: PushPlanItem[];
+  attachments: AttachmentPushPlanItem[];
 };

@@ -5,7 +5,7 @@ import { ConfluenceClient } from "./confluenceClient.js";
 import { parsePageReference } from "./confluenceUrl.js";
 import { CliError } from "./errors.js";
 import { planPush, executePush } from "./push.js";
-import { listLocalChanges, pullPageTree, renderDiff } from "./workspace.js";
+import { listAllLocalChanges, pullPageTree, renderDiff } from "./workspace.js";
 import type { PushSource } from "./types.js";
 
 const program = new Command();
@@ -72,13 +72,13 @@ program
   .description("Show locally changed pulled pages.")
   .option("--dir <dir>", "Pulled workspace directory", "wiki")
   .action(async (options: { dir: string }) => {
-    const changes = await listLocalChanges(options.dir);
-    if (changes.length === 0) {
+    const changes = await listAllLocalChanges(options.dir);
+    if (changes.pages.length === 0 && changes.attachments.length === 0) {
       console.log("No local changes.");
       return;
     }
 
-    for (const change of changes) {
+    for (const change of changes.pages) {
       const files = [
         change.markdownChanged ? "page.md" : undefined,
         change.storageChanged ? "page.storage.html" : undefined
@@ -86,6 +86,10 @@ program
         .filter(Boolean)
         .join(", ");
       console.log(`${change.entry.id} ${change.entry.title} (${files})`);
+    }
+
+    for (const attachment of changes.attachments) {
+      console.log(`${attachment.page.id} ${attachment.page.title} attachment ${attachment.kind}: ${attachment.filePath}`);
     }
   });
 
@@ -132,21 +136,27 @@ program
         minorEdit: options.minorEdit
       };
 
-      const items = options.dryRun
+      const plan = options.dryRun
         ? await planPush(pushOptions)
         : await executePush({ ...pushOptions, client: client ?? new ConfluenceClient(await loadAuthConfig(process.cwd())) });
 
-      if (items.length === 0) {
+      if (plan.pages.length === 0 && plan.attachments.length === 0) {
         console.log("No local changes.");
         return;
       }
 
-      for (const item of items) {
+      for (const item of plan.pages) {
         const versionText = item.nextVersionNumber ? ` -> v${item.nextVersionNumber}` : "";
         console.log(`${options.dryRun ? "Would push" : "Pushed"} ${item.entry.id} ${item.entry.title} from ${item.source}${versionText}`);
         if (item.warning) {
           console.log(`  warning: ${item.warning}`);
         }
+      }
+
+      for (const item of plan.attachments) {
+        console.log(
+          `${options.dryRun ? "Would upload" : "Uploaded"} ${item.kind} attachment ${item.fileName} to ${item.page.id} ${item.page.title}`
+        );
       }
     }
   );

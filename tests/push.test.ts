@@ -44,9 +44,9 @@ describe("push", () => {
       remoteCheck: true
     });
 
-    expect(plan).toHaveLength(1);
-    expect(plan[0]!.source).toBe("markdown");
-    expect(plan[0]!.nextVersionNumber).toBe(3);
+    expect(plan.pages).toHaveLength(1);
+    expect(plan.pages[0]!.source).toBe("markdown");
+    expect(plan.pages[0]!.nextVersionNumber).toBe(3);
   });
 
   it("refuses lossy markdown pushes by default", async () => {
@@ -98,9 +98,52 @@ describe("push", () => {
       minorEdit: true
     });
 
-    expect(pushed).toHaveLength(1);
+    expect(pushed.pages).toHaveLength(1);
     expect(client.updates[0]!.storageValue).toBe("<p>New</p>");
     expect(client.updates[0]!.versionNumber).toBe(5);
     expect(client.updates[0]!.message).toBe("agent update");
+  });
+
+  it("plans and uploads a new attachment", async () => {
+    const root = await tempDir();
+    const client = new FakeConfluenceClient({
+      "100": makePage({
+        id: "100",
+        title: "API Runbook",
+        storage: "<p>Body</p>"
+      })
+    });
+    const manifest = await pullPageTree({ client, rootPageId: "100", outDir: root, maxDepth: 0 });
+    const page = manifest.pages[0]!;
+    await fs.writeFile(fromPosixPath(root, `${page.folderPath}/attachments/result.txt`), "new attachment", "utf8");
+
+    const plan = await planPush({
+      root,
+      client,
+      source: "auto",
+      allowLossy: false,
+      force: false,
+      remoteCheck: true
+    });
+
+    expect(plan.pages).toHaveLength(0);
+    expect(plan.attachments).toHaveLength(1);
+    expect(plan.attachments[0]!.kind).toBe("new");
+
+    const pushed = await executePush({
+      root,
+      client,
+      source: "auto",
+      allowLossy: false,
+      force: false,
+      remoteCheck: true,
+      message: "attach result",
+      minorEdit: true
+    });
+
+    expect(pushed.attachments).toHaveLength(1);
+    expect(client.attachmentUploads[0]!.fileName).toBe("result.txt");
+    expect(new TextDecoder().decode(client.attachmentUploads[0]!.data)).toBe("new attachment");
+    expect(client.attachmentUploads[0]!.comment).toBe("attach result");
   });
 });
