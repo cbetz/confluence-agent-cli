@@ -8,7 +8,8 @@ The goal is simple: turn Confluence pages into local files an agent can inspect,
 conf init --base-url https://example.atlassian.net --email you@example.com
 export CONFLUENCE_API_TOKEN=...
 
-conf pull 123456 --out wiki --depth 2
+conf doctor https://example.atlassian.net/wiki/spaces/ENG/pages/123456/Runbook
+conf pull https://example.atlassian.net/wiki/spaces/ENG/pages/123456/Runbook --out wiki --depth 2
 conf status --dir wiki
 conf diff --dir wiki
 conf push --dir wiki --dry-run
@@ -49,15 +50,30 @@ Credentials are read from the environment:
 - `CONFLUENCE_API_TOKEN` with `CONFLUENCE_EMAIL` or the configured email
 - `CONFLUENCE_BEARER_TOKEN` for OAuth-style bearer auth
 
-### `conf pull <page-id>`
+### `conf pull <page-id-or-url>`
 
 Pulls the root page and child pages.
 
 ```bash
 conf pull 123456 --out wiki --depth 3
+conf pull https://example.atlassian.net/wiki/spaces/ENG/pages/123456/Runbook --out wiki --depth 3
 ```
 
 `--depth 0` pulls only the root page.
+
+If you pass a full Confluence page URL, the CLI extracts both the page ID and base URL. That means first-time users can skip `conf init` when `CONFLUENCE_EMAIL` and `CONFLUENCE_API_TOKEN` are set.
+
+### `conf doctor [page-id-or-url]`
+
+Checks local auth configuration and optional live page access.
+
+```bash
+conf doctor
+conf doctor 123456
+conf doctor https://example.atlassian.net/wiki/spaces/ENG/pages/123456/Runbook
+```
+
+The command prints the base URL and auth mode. When a page is provided, it verifies live access by fetching that page and printing its title/version.
 
 ### `conf status`
 
@@ -107,11 +123,22 @@ Then run:
 conf --help
 ```
 
+Copy `.env.example` if you want a local env file, then source it before running the CLI:
+
+```bash
+cp .env.example .env
+set -a
+source .env
+set +a
+```
+
 ## Current Scope
 
 Implemented:
 
 - Pull Confluence page trees through the Confluence Cloud REST API v2.
+- Pull by pasted Confluence page URL or numeric page ID.
+- Verify auth and page access with `conf doctor`.
 - Write local Markdown, raw storage HTML, metadata, manifest, and original snapshots.
 - Show local status and unified diffs.
 - Push Markdown or storage edits with optimistic version checks.

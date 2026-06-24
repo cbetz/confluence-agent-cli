@@ -11,6 +11,13 @@ Use this skill when the user asks you to edit, audit, update, summarize, or main
    conf diff --dir wiki
    ```
 
+   If no local `wiki/` folder exists yet, pull by page URL when available:
+
+   ```bash
+   conf doctor "https://example.atlassian.net/wiki/spaces/ENG/pages/123456/Runbook"
+   conf pull "https://example.atlassian.net/wiki/spaces/ENG/pages/123456/Runbook" --out wiki --depth 3
+   ```
+
 2. Edit `page.md` for ordinary content changes.
 
 3. If `meta.json` has `"lossyConversionRisk": true`, prefer editing `page.storage.html` instead of `page.md` unless the user explicitly accepts a lossy Markdown rewrite.

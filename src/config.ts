@@ -28,10 +28,10 @@ export async function loadProjectConfig(cwd: string): Promise<ProjectConfig | un
   return projectConfigSchema.parse(parsed);
 }
 
-export async function loadAuthConfig(cwd: string): Promise<AuthConfig> {
+export async function loadAuthConfig(cwd: string, overrides: Partial<ProjectConfig> = {}): Promise<AuthConfig> {
   const projectConfig = await loadProjectConfig(cwd);
-  const baseUrl = process.env.CONFLUENCE_BASE_URL ?? projectConfig?.baseUrl;
-  const email = process.env.CONFLUENCE_EMAIL ?? projectConfig?.email;
+  const baseUrl = overrides.baseUrl ?? process.env.CONFLUENCE_BASE_URL ?? projectConfig?.baseUrl;
+  const email = overrides.email ?? process.env.CONFLUENCE_EMAIL ?? projectConfig?.email;
   const apiToken = process.env.CONFLUENCE_API_TOKEN;
   const bearerToken = process.env.CONFLUENCE_BEARER_TOKEN;
 

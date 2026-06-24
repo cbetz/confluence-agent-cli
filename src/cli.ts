@@ -2,6 +2,7 @@
 import { Command, InvalidArgumentError } from "commander";
 import { writeProjectConfig, loadAuthConfig } from "./config.js";
 import { ConfluenceClient } from "./confluenceClient.js";
+import { parsePageReference } from "./confluenceUrl.js";
 import { CliError } from "./errors.js";
 import { planPush, executePush } from "./push.js";
 import { listLocalChanges, pullPageTree, renderDiff } from "./workspace.js";
@@ -31,18 +32,39 @@ program
 program
   .command("pull")
   .description("Pull a Confluence page tree into local agent-editable files.")
-  .argument("<page-id>", "Root Confluence page ID")
+  .argument("<page>", "Root Confluence page ID or URL")
   .option("--out <dir>", "Output directory", "wiki")
   .option("--depth <n>", "Child page depth to pull", parseNonNegativeInteger, 3)
-  .action(async (pageId: string, options: { out: string; depth: number }) => {
-    const client = new ConfluenceClient(await loadAuthConfig(process.cwd()));
+  .action(async (page: string, options: { out: string; depth: number }) => {
+    const pageRef = parsePageReference(page);
+    const client = new ConfluenceClient(await loadAuthConfig(process.cwd(), { baseUrl: pageRef.baseUrl }));
     const manifest = await pullPageTree({
       client,
-      rootPageId: pageId,
+      rootPageId: pageRef.pageId,
       outDir: options.out,
       maxDepth: options.depth
     });
     console.log(`Pulled ${manifest.pages.length} page(s) into ${options.out}`);
+  });
+
+program
+  .command("doctor")
+  .description("Check Confluence config and page access.")
+  .argument("[page]", "Optional Confluence page ID or URL")
+  .action(async (page?: string) => {
+    const pageRef = page ? parsePageReference(page) : undefined;
+    const auth = await loadAuthConfig(process.cwd(), { baseUrl: pageRef?.baseUrl });
+    const client = new ConfluenceClient(auth);
+
+    console.log(`Base URL: ${auth.baseUrl}`);
+    console.log(`Auth mode: ${auth.bearerToken ? "bearer token" : `API token for ${auth.email}`}`);
+
+    if (pageRef) {
+      const remote = await client.getPage(pageRef.pageId);
+      console.log(`Page: ok ${remote.id} ${remote.title} v${remote.version.number}`);
+    } else {
+      console.log("Page: not checked (pass a page ID or URL to verify live access)");
+    }
   });
 
 program

@@ -156,7 +156,7 @@ export class ConfluenceClient implements ConfluenceGateway {
         detail = response.statusText;
       }
 
-      throw new CliError(`Confluence API ${response.status} ${response.statusText}: ${detail.slice(0, 800)}`);
+      throw new CliError(formatApiError(url, response.status, response.statusText, detail));
     }
 
     return response.json();
@@ -185,4 +185,22 @@ export class ConfluenceClient implements ConfluenceGateway {
 
     return `Basic ${Buffer.from(`${this.config.email}:${this.config.apiToken}`).toString("base64")}`;
   }
+}
+
+function formatApiError(url: string, status: number, statusText: string, detail: string): string {
+  const safeDetail = detail.slice(0, 800);
+
+  if (status === 401) {
+    return `Confluence authentication failed for ${url}. Check CONFLUENCE_EMAIL and CONFLUENCE_API_TOKEN, or CONFLUENCE_BEARER_TOKEN.`;
+  }
+
+  if (status === 403) {
+    return `Confluence access denied for ${url}. Check that the account can use Confluence and has access to the requested page. ${safeDetail}`;
+  }
+
+  if (status === 404) {
+    return `Confluence resource not found for ${url}. The page may not exist, or the account may not have access. ${safeDetail}`;
+  }
+
+  return `Confluence API ${status} ${statusText}: ${safeDetail}`;
 }

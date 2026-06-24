@@ -3,6 +3,18 @@
   "version": "0.1.0",
   "description": "Git-like Confluence pull/diff/push workflow for coding agents.",
   "type": "module",
+  "author": "Chris Betz",
+  "homepage": "https://github.com/cbetz/confluence-agent-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cbetz/confluence-agent-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cbetz/confluence-agent-cli/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
     "conf": "./dist/cli.js"
   },
@@ -11,11 +23,13 @@
     "dist",
     "skills",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    ".env.example"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "dev": "tsx src/cli.ts",
+    "pack:check": "npm pack --dry-run",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
@@ -26,7 +40,6 @@
     "wiki",
     "markdown"
   ],
-  "author": "",
   "license": "MIT",
   "devDependencies": {
     "@types/diff": "^7.0.2",
